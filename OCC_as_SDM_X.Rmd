@@ -1,0 +1,1187 @@
+---
+title: "OCC_as_SDM_X"
+author: "Jeon"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(tmap)
+library(virtualspecies)
+library(NLMR)
+library(raster)
+library(spatstat)
+library(SDMtune)
+library(precrec)
+library(Metrics)
+library(prg)
+```
+
+```{r}
+conflicted::conflict_prefer(name = "select", winner = "dplyr")
+conflicted::conflict_prefer(name = "filter", winner = "dplyr")
+#conflicted::conflict_prefer(name = "stack", winner = "raster")
+#conflicted::conflict_prefer(name = "stack", winner = "utils")
+```
+```{r}
+list.files(path = paste(system.file(package = "dismo"),
+                        "/ex", sep = ''),
+           pattern = "grd",
+           full.names = TRUE) %>%
+  head(2) %>%
+  raster::stack() -> bioclim
+bioclim
+Xs <- bioclim
+```
+
+
+
+
+```{r}
+set.seed(1)
+  raster::stack(
+  NLMR::nlm_gaussianfield(ncol = 1000, nrow =  1000, 
+                        resolution = 1, 
+                        autocorr_range = 100, # range of SAC
+                        mag_var = 1, 
+                        nug = 0, 
+                        mean = 0,
+                        rescale = T),#) -> Xs
+  NLMR::nlm_gaussianfield(ncol = 1000, nrow =  1000, 
+                        resolution = 1, 
+                        autocorr_range = 100, # range of SAC
+                        mag_var = 1, 
+                        nug = 0, 
+                        mean = 0,
+                        rescale = T)) -> Xs
+  #NLMR::nlm_gaussianfield(ncol = 100, nrow =  100, 
+  #                      resolution = 1, 
+  #                      autocorr_range = 50, # range of SAC
+  #                      mag_var = 1, 
+  #                      nug = 0, 
+  #                      mean = 0,
+  #                      rescale = T)) -> Xs
+
+```
+
+
+
+
+```{r}
+
+plot(Xs[[1]])
+```
+```{r}
+# one variable
+set.seed(2) 
+virtualspecies::generateRandomSp(raster.stack = stack(Xs[[1]]),
+                                 approach = "response",
+                                 rescale = FALSE, # normalization Y
+                                 rescale.each.response = FALSE, # normalization X 
+                                 convert.to.PA = FALSE,
+                                 species.type = "additive",
+                                 relations = c("linear")) -> vs.rnd
+```
+
+
+
+```{r}
+set.seed(94)
+virtualspecies::generateRandomSp(raster.stack = Xs,
+                                 approach = "response",
+                                 rescale = TRUE,
+                                 rescale.each.response = FALSE,
+                                 convert.to.PA = FALSE,
+                                 species.type = "additive",
+                                 relations = c("linear")) -> vs.rnd
+```
+```{r}
+#PA$sample.plot
+```
+
+
+#map(seq(0.01, 99.99, by = 0.01), function(KS){
+#formatFunctions(layer = c(fun = "dnorm",
+#                            mean = a$details$parameters$layer$args[["mean"]],
+#                            sd = a$details$parameters$layer$args[["sd"]] * KS))}) -> FF.KS
+set.seed(1)
+map(seq(0.2,1, by = 0.2), function(x){
+  formatFunctions(layer = c(fun = "dnorm",
+                            mean = a$details$parameters$layer$args[["mean"]],
+                            sd = x))}) %>%
+  
+                #layer.2 = c(fun = "dnorm",
+                #            mean = a$details$parameters$layer.2$args[["mean"]],
+                #            sd = a$details$parameters$layer.2$args[["sd"]])) %>%
+                #layer.3 = c(fun = "dnorm",
+                #            mean = a$details$parameters$layer.3$args[["mean"]],
+                #            sd = a$details$parameters$layer.3$args[["sd"]])) %>%
+map(., 
+    function(ff){
+      generateSpFromFun(raster.stack = Xs,
+                  parameters = ff,
+                  rescale = TRUE, #rescale Y
+                  rescale.each.response = FALSE, # rescale X
+                  formula = NULL, #편반응결합에 쓰인 공식
+                  species.type = "multiplicative",
+                  plot = TRUE)}) -> a # 표준편차를 달리한 종의 집합(군집별로 달라져야함)
+
+a[[1]]$suitab.raster
+
+
+
+(a[[1]]$suitab.raster * KS.b.1) %>% plot()
+
+```{r}
+#seq(-1.5, 1.5, by = 0.5) -> apop
+#map(seq(-1.5, 1.5, by = 0.5), function(x){
+seq(1, 10, by = 1) -> apop
+formatFunctions(bio1 = c(fun = "linearFun", 
+                            a = vs.rnd$details$parameters$layer.1$args[["a"]], #a1
+                            b = vs.rnd$details$parameters$layer.1$args[["b"]]), #b01
+                bio12 = c(fun = "linearFun",
+                            a = vs.rnd$details$parameters$layer.2$args[["a"]], #a02
+                            b = vs.rnd$details$parameters$layer.2$args[["b"]])) %>% #b02
+generateSpFromFun(raster.stack = Xs,
+                  parameters = .,
+                  rescale = TRUE, #rescale Y #if not, can't weight manual bias. output suitab.raster have negative values.
+                  rescale.each.response = FALSE, # rescale X
+                  formula = "bio1 + bio12", #편반응결합에 쓰인 공식 
+                  #species.type = "additive", #각 변수에서 얻은 점수를 더함
+                  plot = TRUE) -> vs.lfun # this VS reflect pop density is affected by X1(layer.1)
+vs.lfun <- vs.rnd
+vs.lfun$suitab.raster[vs.lfun$suitab.raster == 0] <- 0.000001
+#paste0("(1/(1-(", x, "*layer.1))) * (layer.1 + layer.2)"), #편반응결합에 쓰인 공식 
+
+```
+
+```{r}
+
+par(mfrow=c(1,2))
+plot((1/(1-apop[1]*Xs[[1]])) * vs.lfun$suitab.raster)
+plot(vs.lfun$suitab.raster)
+```
+```{r}
+vs.lfun <- list(vs.lfun, vs.lfun, vs.lfun, 
+                vs.lfun, vs.lfun, vs.lfun, 
+                vs.lfun, vs.lfun, vs.lfun,
+                vs.lfun, vs.lfun, vs.lfun,
+                vs.lfun)
+vs.lfun
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfun)
+vs.lfunSAFDZZS[[1]]))
+plot(vs.lfun[[2]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[2]))
+plot(vs.lfun[[3]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[3]))
+plot(vs.lfun[[4]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[4]))
+plot(vs.lfun[[5]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[5]))
+plot(vs.lfun[[6]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[6]))
+plot(vs.lfun[[7]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[7])) # limit
+plot(vs.lfun[[8]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[8]))
+plot(vs.lfun[[9]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[9]))
+plot(vs.lfun[[10]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[10]))
+plot(vs.lfun[[11]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[11]))
+plot(vs.lfun[[12]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[12]))
+plot(vs.lfun[[13]]$suitab.raster, 
+     main = paste0("if X1 is affected by Xpop", apop[13]))
+
+```
+
+#((1/(1-1.3*Xs$layer.1)) * vs.rnd$suitab.raster) -> z
+#
+#range01 <- function(x){(x-minValue(x))/(maxValue(x)-minValue(x))}
+#range01 <- function(x, ...){(x - minValue(x, ...)) / (max(x, ...) - min(x, ...))}
+#range01(z) %>% plot()
+#range01(z)%>% hist(., breaks = 99)
+
+
+
+
+vs.lfun$suitab.raster %>% hist()
+
+
+
+set.seed(1)
+virtualspecies::generateRandomSp(raster.stack = Xs,
+                                 approach = "response",
+                                 rescale = T,
+                                 convert.to.PA = F,
+                                 relations = c("gaussian")) -> a
+
+```{r}
+par(mfrow = c(3,3))
+plot(vs.rnd$suitab.raster, 
+     main = "random VS")
+plot(vs.lfun[[1]]$suitab.raster, 
+     main = "if X1 is affected by Xpop -0.6(apop)")
+plot(vs.lfun[[2]]$suitab.raster, 
+     main = "if X1 is affected by Xpop -0.4(apop)")
+plot(vs.lfun[[3]]$suitab.raster, 
+     main = "if X1 is affected by Xpop -0.2(apop)")
+plot(vs.lfun[[4]]$suitab.raster, 
+     main = "if X1 is affected by Xpop 0(apop)")
+plot(vs.lfun[[5]]$suitab.raster, 
+     main = "if X1 is affected by Xpop 0.2(apop)")
+plot(vs.lfun[[6]]$suitab.raster, 
+     main = "if X1 is affected by Xpop 0.4(apop)")
+plot(vs.lfun[[7]]$suitab.raster, 
+     main = "if X1 is affected by Xpop 0.6(apop)")
+
+
+```
+
+
+```{r}
+
+vs.lfun %>% map(3) %>% stack() %>%
+tm_shape(.) +
+    tm_raster(legend.is.portrait = FALSE,
+              legend.hist = TRUE,
+              palette = "cividis") +
+    tm_layout(legend.outside = TRUE,
+      legend.outside.position = c("bottom"),
+      legend.outside.size = 0.4,
+      legend.hist.width = 2,
+      #legend.text.size = 1.4,
+      frame = FALSE) -> tm_lfun
+tm_lfun
+
+
+tmap_arrange(tm_lfun) -> tm_lfun_all
+tmap_arrange(tm_lfun[[2]],
+             tm_lfun[[3]],
+             tm_lfun[[4]],
+             tm_lfun[[5]],
+             tm_lfun[[6]],
+             tm_lfun[[7]],
+             ncol = 7) -> tm_lfun_all
+tm_lfun_all
+```
+
+
+
+```{r}
+tmap::tmap_save(tm = tm_lfun_all,
+                filename = "test.svg",
+#                width = 200, 
+#                height = 100,
+                dpi = 400)
+  
+  
+```
+
+
+formatFunctions(layer.1 = c(fun = "linearFun",
+                            a = -1.537881,
+                            b = 0.5390189),
+                layer.2 = c(fun = "linearFun",
+                            a = vs.rnd$details$parameters$layer.2$args[["a"]],
+                            b = vs.rnd$details$parameters$layer.2$args[["b"]])) %>%
+  generateSpFromFun(raster.stack = Xs,
+                  parameters = .,
+                  rescale = FALSE, #rescale Y
+                  rescale.each.response = FALSE, # rescale X
+                  formula = NULL, #편반응결합에 쓰인 공식 
+                  species.type = "additive", #각 변수에서 얻은 점수를 더함
+                  plot = TRUE) -> testvs
+
+
+개체군 밀도가 환경 반응 함수에 영향을 주는 종의 경우,
+개체군 밀도를 반영한 모형이 그렇지 않은 모형보다 
+더 정확한 예측력과 해석을 보인다
+
+
+
+```{r}
+set.seed(1)
+vs.lfun %>%
+ map(function(x){
+  convertToPA(x, 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    extract.probability = TRUE,
+                    replacement = TRUE,
+                    n = 1000,
+                    sample.prevalence = 0.5,
+                    bias = "manual",
+                    weights = x$suitab.raster,
+                    type = "presence-absence")}) -> PA
+PA[[1]]
+```
+
+
+```{r}
+
+PA %>% 
+  map(function(x){x$sample.points %>%
+  filter(Real == 1)}) -> presence
+
+PA %>% 
+  map(function(x){x$sample.points %>%
+  filter(Real == 0)}) -> absence
+## test
+set.seed(2)
+vs.lfun %>%
+ map(function(x){
+  convertToPA(x, 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    extract.probability = TRUE,
+                    replacement = TRUE,
+                    n = 1000,
+                    sample.prevalence = 0.5,
+                    bias = "manual",
+                    weights = x$suitab.raster,
+                    type = "presence-absence")}) -> PA.test
+
+PA.test %>% 
+  map(function(x){x$sample.points %>%
+  filter(Real == 1)}) -> presence.test
+
+PA.test %>% 
+  map(function(x){x$sample.points %>%
+  filter(Real == 0)}) -> absence.test
+
+
+
+presence %>% 
+  map(function(x){select(x, c("x", "y")) %>% 
+      sf::st_as_sf(coords = c("x", "y"))}) -> sf.presence
+
+presence %>%
+  map(function(x){
+  select(x, c("x", "y")) %>%
+{ppp(.$x, .$y, 
+     #marks = dplyr::select(., "true.probability"),
+      window = owin(xrange = c(0, 1000),
+                    yrange = c(0, 1000)))} %>%
+  {density.ppp(x = .,
+               edge = FALSE,
+          kernel = "gaussian",
+          sigma = 30,
+          dimyx = c(1000,1000),
+          eps = c(1,1))} %>%
+  raster()}) -> KDE.presence
+
+```
+```{r}
+map(KDE.presence, function(x){x * Xs[[1]]}) -> KDExXs1
+par(mfrow = c(2,7))
+for(i in 1:7){
+plot(KDExXs1[[i]])}
+for(i in 1:7){
+plot(vs.lfun[[i]]$suitab.raster)}
+
+```
+
+```{r}
+# Xs1, Xs2, Xpop
+pmap(list(presence, vs.lfun), function(y, z){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, z$suitab.raster),
+                    p = y[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.Xpop
+
+pmap(list(presence.test, absence.test, vs.lfun), function(y, z, xx){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, xx$suitab.raster),
+                    p = y[,c("x", "y")],
+                    a = z[,c("x", "y")])}) -> TEST.Xpop
+
+# Xs1, Xs2, XpopxXs1
+pmap(list(presence, vs.lfun), function(y, z){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, (z$suitab.raster * Xs[[1]])),
+                    p = y[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.XpopxXs1
+
+pmap(list(presence.test, absence.test, vs.lfun), function(y, z, xx){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, (xx$suitab.raster * Xs[[1]])),
+                    p = y[,c("x", "y")],
+                    a = z[,c("x", "y")])}) -> TEST.XpopxXs1
+
+# Xs1, Xs2, KDE, KDExXS1
+pmap(list(KDE.presence, presence, KDExXs1), function(x, y, z){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, x, z),
+                    p = y[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.KDExXs1
+
+pmap(list(KDE.presence, presence.test, absence.test, KDExXs1), function(x, y, z, xx){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, x, xx),
+                    p = y[,c("x", "y")],
+                    a = z[,c("x", "y")])}) -> TEST.KDExXs1
+
+# Xs1, Xs2, KDExXS1
+pmap(list(presence, KDExXs1), function(x, y){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, y),
+                    p = x[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.xXs1
+
+pmap(list(presence.test, absence.test, KDExXs1), function(x, y, z){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, z),
+                    p = x[,c("x", "y")],
+                    a = y[,c("x", "y")])}) -> TEST.xXs1
+
+
+
+# Xs1, Xs2, KDE
+map2(KDE.presence, presence, function(x, y){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, x),
+                    p = y[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.KDE
+
+pmap(list(KDE.presence, presence.test, absence.test), function(x, y, z){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = stack(Xs, x),
+                    p = y[,c("x", "y")],
+                    a = z[,c("x", "y")])}) -> TEST.KDE
+
+# Xs1, Xs2
+map(presence, function(x){SDMtune::prepareSWD(species = "VS_dft",
+                    env = Xs,
+                    p = x[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000))}) -> SWD.dft
+
+map2(presence.test, absence.test, function(x, y){
+SDMtune::prepareSWD(species = "VS_KDE",
+                    env = Xs,
+                    p = x[,c("x", "y")],
+                    a = y[,c("x", "y")])}) -> TEST.dft
+
+
+SWD.Xpop %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.Xpop
+
+SWD.XpopxXs1 %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.XpopxXs1
+
+SWD.KDExXs1 %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.KDExXs1
+
+
+SWD.xXs1 %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.xXs1
+
+
+SWD.KDE %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.KDE
+
+SWD.dft %>% 
+  map(function(x){
+SDMtune::train(method = "Maxent",
+               fc = "l",
+               data = x)}) -> MX.dft
+
+
+```
+
+```{r}
+SDMtune::plotResponse(model = MX.dft[[1]],
+                      var = "layer.1")
+SDMtune::plotResponse(model = MX.dft[[2]],
+                      var = "layer.2")
+
+```
+## resid
+```{r}
+## Xpop
+pmap(list(MX.Xpop, vs.lfun),
+     function(x, y){SDMtune::predict(x,
+                 stack(Xs, y$suitab.raster))}) -> Pred.MX.Xpop
+
+map2(vs.lfun, Pred.MX.Xpop, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.Xpop
+## XpopxXs1
+pmap(list(MX.XpopxXs1, vs.lfun),
+     function(x, y){SDMtune::predict(x,
+                 stack(Xs, y$suitab.raster))}) -> Pred.MX.XpopxXs1
+
+map2(vs.lfun, Pred.MX.XpopxXs1, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.XpopxXs1
+##
+pmap(list(MX.KDExXs1, KDE.presence, KDExXs1),
+     function(x, y, z){SDMtune::predict(x,
+                 stack(Xs, y, z))}) -> Pred.MX.KDExXs1
+
+map2(vs.lfun, Pred.MX.KDExXs1, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.KDExXs1
+
+
+map2(MX.xXs1, KDExXs1,
+     function(x, y){SDMtune::predict(x,
+                 stack(Xs, y))}) -> Pred.MX.xXs1
+
+map2(vs.lfun, Pred.MX.xXs1, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.xXs1
+
+
+map2(MX.KDE, KDE.presence, 
+     function(x, y){SDMtune::predict(x,
+                 stack(Xs, y))}) -> Pred.MX.KDE
+
+map2(vs.lfun, Pred.MX.KDE, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.KDE
+
+
+map(MX.dft,
+     function(x){SDMtune::predict(x, Xs)}) -> Pred.MX.dft
+
+map2(vs.lfun, Pred.MX.dft, function(x, y){
+  as.vector(x$suitab.raster - y)}) -> resid.MX.dft
+
+```
+
+align to dft
+```{r}
+map2(resid.MX.dft, resid.MX.KDE, function(x, y){abs(x) - abs(y)}) -> align.KDE
+align.KDE
+
+```
+
+
+```{r}
+rbind(
+as.data.frame(resid.MX.dft,
+              col.names = apop) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "apop",
+               values_to = "value") %>%
+  mutate(interpolation = "dft", .after = "apop"),
+
+as.data.frame(resid.MX.KDE,
+              col.names = apop) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "apop",
+               values_to = "value") %>%
+  mutate(interpolation = "KDE", .after = "apop")) %>%
+  ggplot(aes(interpolation, value)) +
+  geom_violin()
+```
+```{r}
+rbind(
+as.data.frame(resid.MX.dft,
+              col.names = apop) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "apop",
+               values_to = "value") %>%
+  mutate(interpolation = "dft", .after = "apop"),
+
+as.data.frame(resid.MX.KDE,
+              col.names = apop) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "apop",
+               values_to = "value") %>%
+  mutate(interpolation = "KDE", .after = "apop")) %>%
+  ggplot(aes(apop, value, fill = interpolation)) +
+  geom_violin()
+```
+```{r}
+
+data.frame(
+  rmse.Xpop = map2_dbl(vs.lfun, Pred.MX.Xpop, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+                predicted = as.vector(y))}),
+  rmse.XpopxXs1 = map2_dbl(vs.lfun, Pred.MX.XpopxXs1, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+                predicted = as.vector(y))}),
+  rmse.dft = map2_dbl(vs.lfun, Pred.MX.dft, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+                predicted = as.vector(y))}),
+  rmse.KDE = map2_dbl(vs.lfun, Pred.MX.KDE, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+  rmse.KDExXs1 = map2_dbl(vs.lfun, Pred.MX.KDExXs1, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+  rmse.xXs1 = map2_dbl(vs.lfun, Pred.MX.xXs1, function(x, y){
+  Metrics::rmse(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+mae.dft = map2_dbl(vs.lfun, Pred.MX.dft, function(x, y){
+  Metrics::mae(actual = as.vector(x$suitab.raster),
+                predicted = as.vector(y))}),
+mae.KDE = map2_dbl(vs.lfun, Pred.MX.KDE, function(x, y){
+Metrics::mae(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+mae.KDExXs1 = map2_dbl(vs.lfun, Pred.MX.KDExXs1, function(x, y){
+Metrics::mae(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+mae.xXs1 = map2_dbl(vs.lfun, Pred.MX.xXs1, function(x, y){
+Metrics::mae(actual = as.vector(x$suitab.raster),
+              predicted = as.vector(y))}),
+auc.Xpop = map2_dbl(MX.Xpop, TEST.Xpop, function(x,y){SDMtune::auc(model = x, test = y)}),
+auc.dft = map2_dbl(MX.dft, TEST.dft, function(x,y){SDMtune::auc(model = x, test = y)}),
+auc.KDE = map2_dbl(MX.KDE, TEST.KDE, function(x,y){SDMtune::auc(model = x, test = y)}),
+auc.KDExXs1 = map2_dbl(MX.KDExXs1, TEST.KDExXs1, function(x,y){SDMtune::auc(model = x, test = y)}),
+auc.xXs1 = map2_dbl(MX.xXs1, TEST.xXs1, function(x,y){SDMtune::auc(model = x, test = y)}),
+tss.dft = map2_dbl(MX.dft, TEST.dft, function(x,y){SDMtune::tss(model = x, test = y)}),
+tss.KDE = map2_dbl(MX.KDE, TEST.KDE, function(x,y){SDMtune::tss(model = x, test = y)}),
+tss.KDE = map2_dbl(MX.KDExXs1, TEST.KDExXs1, function(x,y){SDMtune::tss(model = x, test = y)}),
+tss.KDE = map2_dbl(MX.xXs1, TEST.xXs1, function(x,y){SDMtune::tss(model = x, test = y)}),
+prg.dft = map2(MX.dft, TEST.dft, function(x,y){prg::create_prg_curve(labels = y@pa,
+                                pos_scores = SDMtune::predict(x,
+                                                              y))}) %>% map_dbl(prg::calc_auprg),
+                                #neg_scores = SDMtune::predict(x,
+                                #                              y)[y@pa == 0])}) 
+prg.KDE = map2(MX.KDE, TEST.KDE, function(x,y){prg::create_prg_curve(labels = y@pa,
+                                pos_scores = SDMtune::predict(x,
+                                                              y))}) %>% map_dbl(prg::calc_auprg),
+prg.KDExXs1 = map2(MX.KDExXs1, TEST.KDExXs1, function(x,y){prg::create_prg_curve(labels = y@pa,
+                                pos_scores = SDMtune::predict(x,
+                                                              y))}) %>% map_dbl(prg::calc_auprg),
+prg.xXs1 = map2(MX.xXs1, TEST.xXs1, function(x,y){prg::create_prg_curve(labels = y@pa,
+                                pos_scores = SDMtune::predict(x,
+                                                              y))}) %>% map_dbl(prg::calc_auprg)) -> df.eval
+
+
+
+
+rbind(
+  {dplyr::select(df.eval, ends_with("KDE")) %>%
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+      mutate(interpolation = "KDE")},
+  {dplyr::select(df.eval, ends_with("dft")) %>%
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+    mutate(interpolation = "dft")},
+  {dplyr::select(df.eval, ends_with("KDExXs1")) %>%
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+      mutate(interpolation = "KDExXs1")},
+  {dplyr::select(df.eval,  ends_with("xXs1") & !contains("KDE")) %>%
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+      mutate(interpolation = "xXs1")},
+  {dplyr::select(df.eval,  ends_with("xXs1") & contains("Xpop")) %>%
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+      mutate(interpolation = "XpopxXs1")},
+  {dplyr::select(df.eval,  ends_with("Xpop")) %>% 
+      pivot_longer(data = .,
+                   cols = everything(),
+                   names_to = "loss",
+                   values_to = "value") %>%
+      mutate(interpolation = "Xpop")}
+  ) %>%
+  ggplot(aes(loss, value, colour = interpolation, size = 10)) +
+  geom_point() +
+  labs(title = "Model evaluation metrics",
+           y = "Value",
+           x = "Evaluation metrics",
+           size = 15) +
+      theme_light() +
+      theme(axis.text = element_text(size = 14),
+            legend.position = "bottom", legend.direction = "horizontal")-> plot.eval
+plot.eval
+ggsave(plot = plot.eval, filename = "plot.eval.svg", width = 480, height = 120, units = "mm", dpi = 400, limitsize = FALSE)
+
+
+```
+
+
+
+```{r}
+
+data.frame(KDE = align.KDE) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "interpolation",
+               values_to = "value") %>%
+  ggplot(aes(interpolation, value)) +
+  geom_violin()
+
+```
+
+
+
+
+
+```{r}
+rbind(vs.rnd$details$parameters[[1]]$args, vs.rnd$details$parameters[[2]]$args)
+```
+```{r}
+rbind(vs.lfun[[4]]$details$parameters[[1]]$args, vs.lfun[[4]]$details$parameters[[2]]$args)
+```
+
+
+
+
+```{r}
+map_dbl(vs.lfun, function(vs.l){
+cor(as.vector(vs.rnd$suitab.raster - vs.l$suitab.raster), as.vector(Xs$layer.2))})
+
+cor(as.vector(vs.lfun[[5]]$suitab.raster - vs.rnd$suitab.raster), as.vector(Xs$layer.2))
+
+```
+
+
+
+
+
+
+
+```{r}
+
+
+set.seed(1)
+vs.rnd %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.1) %>%
+  sampleOccurrences(.,
+                    extract.probability = T,
+                    n = 1000,
+                    type = "presence-absence") -> PA
+
+PA$sample.points %>%
+  filter(Real == 1) -> presence
+
+presence %>% select(c("x", "y")) %>% sf::st_as_sf(coords = c("x", "y")#,
+                                                    ) -> sf.presence
+
+presence %>%
+  select(c("x", "y")) %>%
+{ppp(.$x, .$y, 
+     #marks = dplyr::select(., "true.probability"),
+      window = owin(xrange = c(0, 100),
+                    yrange = c(0, 100)))} %>%
+  {density.ppp(x = .,
+               edge = FALSE,
+          kernel = "gaussian",
+          sigma = 7,
+          dimyx = c(100,100),
+          eps = c(1,1))} %>%
+  raster() -> KDE.presence
+
+
+#KS.b.1 %>% {raster(x = .$v,
+##                   xmn = 0, 
+##                   ymn = 0,
+#                   xmx = 100,
+#                   ymx = 100)} -> KS.b.1
+```
+
+```{r}
+vs.rnd %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) -> PA
+
+PA %>%
+  sampleOccurrences(.,
+                    extract.probability = T,
+                    n = 6,
+                    sample.prevalence = 0.5,
+                    replacement = TRUE,
+                    type = "presence-absence") -> occ
+
+
+#3^(2:9)
+#seq(10, 1000, by = 100)
+purrr::accumulate(append(list(occ), seq(10, 100, by = 10)), function(occs, n){
+occs$sample.points[occs$sample.points$Real == 1,c("x", "y")] %>%
+ st_as_sf(coords = c("x", "y")) %>%
+ st_buffer(., 
+           dist = 5) %>%
+  as_Spatial() %>%
+  sampleOccurrences(PA,
+                    bias = "polygon", 
+                    bias.area = .,
+                    extract.probability = TRUE,
+                    n = n,
+                    bias.strength = 500,
+                    sample.prevalence = 0.5,
+                    replacement = TRUE,
+                    type = "presence-absence")}) -> bias.occ
+
+
+```
+
+```{r}
+map(bias.occ, function(occs){
+occs$sample.points %>%
+  filter(Real == 1)}) -> presence
+
+#presence %>% select(c("x", "y")) %>% sf::st_as_sf(coords = c("x", "y")#,
+#                                                    ) -> sf.presence
+
+presence %>%
+map(function(presence){
+  presence %>%
+  select(c("x", "y")) %>%
+{ppp(.$x, .$y, 
+     #marks = dplyr::select(., "true.probability"),
+      window = owin(xrange = c(0, 100),
+                    yrange = c(0, 100)))} %>%
+  Kest()}) -> L.presence
+map(L.presence, plot)
+```
+
+
+```{r warning=FALSE}
+tmap_arrange(
+  tm_shape(KDE.presence) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+  tm_layout(legend.position = c("right", "bottom")),
+  tm_shape(vs.rnd$suitab.raster) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+  tm_layout(legend.position = c("right", "bottom")))
+```
+ 
+
+```{r}
+tm_shape(Xs) +
+  tm_raster()
+```
+
+[min=0; max=1] : linearFun   (a=-0.232323232323232; b=0.132171321713217)
+
+```{r}
+plotResponse(vs.rnd)
+```
+
+
+```{r}
+SDMtune::prepareSWD(species = "VS1",
+                    env = stack(Xs, KDE.presence),
+                    p = presence[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000)) -> SWD
+
+SDMtune::train(method = "Maxent",
+               data = SWD) -> MX
+```
+
+```{r}
+SDMtune::plotResponse(model = MX,
+                      var = "layer.1")
+SDMtune::plotResponse(model = MX,
+                      var = "layer.2")
+
+```
+
+```{r}
+SDMtune::predict(MX, stack(Xs, KDE.presence)) -> PRED.MX
+```
+
+
+```{r}
+tmap_arrange(
+  tm_shape(PRED.MX) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+    tm_layout(legend.position = c("right", "bottom")), # PRED map
+  tm_shape(z) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() + 
+  tm_layout(legend.position = c("right", "bottom")), # KDE map
+  tm_shape(vs.rnd$suitab.raster) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+  tm_layout(legend.position = c("right", "bottom"))) # HS map
+
+```
+
+
+
+
+## 
+
+```{r}
+SDMtune::prepareSWD(species = "VS1",
+                    env = stack(Xs),
+                    p = presence[,c("x", "y")],
+                    a = dismo::randomPoints(Xs, 10000)) -> SWD.Xs
+
+SDMtune::train(method = "Maxent",
+               data = SWD.Xs,
+               fc = c("l")) -> MX.Xs.L
+
+
+SDMtune::train(method = "Maxent",
+               data = SWD.Xs) -> MX.Xs.LQPH
+```
+
+```{r}
+SDMtune::plotResponse(model = MX.Xs.L,
+                      var = "layer")
+
+
+```
+
+
+```{r}
+SDMtune::predict(MX.Xs.L, stack(Xs)) -> PRED.MX.Xs.L
+```
+
+```{r}
+SDMtune::predict(MX.Xs.LQPH, stack(Xs)) -> PRED.MX.Xs.LQPH
+```
+
+```{r}
+tmap_arrange(
+  tm_shape(PRED.MX.Xs) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+    tm_layout(legend.position = c("right", "bottom")), # PRED map
+  tm_shape(KDE.presence) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() + 
+  tm_layout(legend.position = c("right", "bottom")), # KDE map
+  tm_shape(vs.rnd$suitab.raster) +
+    tm_raster() +
+  tm_shape(sf.presence) +
+    tm_dots() +
+  tm_layout(legend.position = c("right", "bottom"))) # HS map
+
+```
+
+```{r}
+(vs.rnd$suitab.raster - PRED.MX.Xs.L) %>% as.vector() -> resid.Xs.L
+(vs.rnd$suitab.raster - PRED.MX.Xs.LQPH) %>% as.vector() -> resid.Xs.LQPH
+
+data.frame(XL.L = resid.Xs.L,
+           Xs.LQPH = resid.Xs.LQPH) %>%
+  pivot_longer(data = .,
+               cols = everything(),
+               names_to = "fc",
+               values_to = "value") %>%
+  ggplot(aes(fc, value)) +
+  geom_violin()
+
+```
+
+```{r}
+((10000*KDE.presence*Xs) + 0.132171321713217) -> z
+```
+
+
+set.seed(1)
+a[[1]] %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    extract.probability = T,
+                    n = 600,
+                    type = "presence-absence") -> b.1.1
+
+
+b.1$sample.points %>%
+  filter(Real == 1) %>%
+  st_as_sf(coords = c("x", "y")) -> sf.b.1
+
+sf.b.1 %>%  
+  st_buffer(5) -> buf.b.1
+
+
+tm_shape(a[[1]]$suitab.raster) +
+  tm_raster(palette = "viridis") +
+tm_shape(buf.b.1) +
+  tm_polygons(alpha = 0.2) +
+tm_shape(sf.b.1) +
+  tm_dots() +
+tm_layout(legend.outside = TRUE)-> tm.b1
+tm.b1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+a[[2]] %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    bias = "polygon",
+                    bias.area = as_Spatial(buf.b.1),
+                    bias.strength = 5,
+                    extract.probability = T,
+                    n = 600,
+                    type = "presence-absence") -> b.2
+
+b.2$sample.points %>%
+  filter(Real == 1) %>%
+  st_as_sf(coords = c("x", "y")) -> sf.b.2
+
+sf.b.2 %>%  
+  st_buffer(5) -> buf.b.2
+
+tm_shape(a[[2]]$suitab.raster) +
+  tm_raster(palette = "viridis") +
+tm_shape(buf.b.2) +
+  tm_polygons(alpha = 0.2) +
+tm_shape(sf.b.2) +
+  tm_dots() +
+tm_layout(legend.outside = TRUE)-> tm.b2
+tm.b2
+
+
+
+a[[3]] %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    bias = "polygon",
+                    bias.area = as_Spatial(buf.b.2),
+                    bias.strength = 5,
+                    extract.probability = T,
+                    n = 900,
+                    type = "presence-absence") -> b.3
+
+b.3$sample.points %>%
+  filter(Real == 1) %>%
+  st_as_sf(coords = c("x", "y")) -> sf.b.3
+
+sf.b.3 %>%  
+  st_buffer(5) -> buf.b.3
+
+
+tm_shape(a[[3]]$suitab.raster) +
+  tm_raster(palette = "viridis") +
+tm_shape(buf.b.3) +
+  tm_polygons(alpha = 0.2) +
+tm_shape(sf.b.3) +
+  tm_dots() +
+tm_layout(legend.outside = TRUE) -> tm.b3
+tm.b3
+
+tmap_arrange(tm.b1, tm.b2, tm.b3)
+
+첫번째 지도(tm.1)는 출현 자료의 공간구조가 서식처 적합도에 영향을 못주는 형태
+두번째 지도(tm.2)는 출현 자료의 공간구조가 반응함수를 수정했고(사실 내가 수정함)
+그 반응함수에 따라 서식처 적합도가 재계산되었으며(사실 새로 종 만듬)
+해당 서식처 적합도 내에서 출현 자료가 재수집되나 기존 출현자료인근에서 더 자주 수집되도록 설정하였음.
+
+
+a[[4]] %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    bias = "manual",
+                    weights = a[[4]]$suitab.raster,
+                    extract.probability = T,
+                    n = 1200,
+                    type = "presence-absence") -> b.4
+
+a[[5]] %>%
+  convertToPA(., 
+               PA.method = "probability",
+               prob.method = "linear",
+               species.prevalence = 0.3) %>%
+  sampleOccurrences(.,
+                    bias = "manual",
+                    weights = a[[5]]$suitab.raster,
+                    extract.probability = T,
+                    n = 1500,
+                    type = "presence-absence") -> b.5
+
+
+
+#  convertToPA(., 
+#               PA.method = "probability",
+#               prob.method = "linear",
+#               species.prevalence = 0.5) %>%
+#  sampleOccurrences(.,
+#                    extract.probability = T,
+#                    n = 600,
+#                    type = "presence-absence")}) -> Occs
+
+#map(a, plotResponse)
+list(b.1, b.2, b.3) %>% map(function(x){st_as_sf(x$sample.points, coords = c("x", "y"))}) %>%
+  map(function(x){plot(x["Real"])})
+
+
+
+
+map(a, function(x){plot(x$suitab.raster)})-> c
+
+
