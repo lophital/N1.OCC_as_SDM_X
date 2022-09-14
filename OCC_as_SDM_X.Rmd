@@ -59,9 +59,19 @@ library(SDMtune)
 library(precrec)
 library(Metrics)
 library(prg)
+
 ```
 
 
+```{r}
+library(parallel) #parallel computing
+library(foreach)
+library(doParallel)
+
+cores <- 40
+cluster <- parallel::makeCluster(spec = cores, outfile="")
+doParallel::registerDoParallel(cl = cluster)
+```
 
 
 
@@ -182,10 +192,28 @@ Xpop <- runif(runs, min = 0, max = 1)
 
 ```{r}
 set.seed(1)
-inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(sample(Xs[[1]], 1)-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
-              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(sample(Xs[[2]], 1)-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.00001 
-Xpop[inequation] %>% length()
-Xpop[inequation]
+
+acc.lim <- seq(from = 0.0000000001, to = 0.00001, by = 0.000000005)
+r.vector <- vector()
+for(i in 1:length(Xs[[1]])){
+  j <- 1
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
+  while(length(Xpop[inequation]) != 1){
+j <- j+1
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
+  r.vector[i] <- Xpop[inequation]}
+  
+
+  
+
+
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.00001
+
+length(Xpop[inequation])
+
 
 ```
 
