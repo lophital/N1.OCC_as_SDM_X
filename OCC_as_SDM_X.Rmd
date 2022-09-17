@@ -105,7 +105,7 @@ Xs.name <- names(Xs)
 
 ```{r}
 my.gfd <- function(){
-NLMR::nlm_gaussianfield(ncol = 1000, nrow =  1000,
+NLMR::nlm_gaussianfield(ncol = 1000, nrow = 1000,
                         resolution = 1,
                         autocorr_range = 100, # range of SAC
                         mag_var = 1,
@@ -126,7 +126,7 @@ stack(Xs) -> Xs
 ```
 
 ```{r}
-plot(X1)
+plot(Xs[[1]])
 ```
 
 
@@ -193,20 +193,70 @@ Xpop <- runif(runs, min = 0, max = 1)
 ```{r}
 set.seed(1)
 
-acc.lim <- seq(from = 0.0000000001, to = 0.00001, by = 0.000000005)
+acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
 r.vector <- vector()
-for(i in 1:length(Xs[[1]])){
+foreach(i = 1:length(Xs[[1]])) %dopar% {
   j <- 1
 inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
               (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
-  while(length(Xpop[inequation]) != 1){
+  while(length(Xpop[inequation]) > 4){
 j <- j+1
 inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
               (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
-  r.vector[i] <- Xpop[inequation]}
-  
+  r.vector[i] <- mean(Xpop[inequation])} -> r.vector
 
+### test
+acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
+r.vector <- vector()
+foreach(i = 1:length(Xs[[1]])) %dopar% {
+  j <- 1
+inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
+              ((1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2)) - Xpop) < 0.1
+  while(length(Xpop[inequation]) > 4 && j == length(acc.lim)-1){
+j <- j+1
+inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
+              ((1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2)) - Xpop) < acc.lim[j]}
+  r.vector[i] <- mean(Xpop[inequation])} -> r.vector
+
+map_dbl(r.vector, rbind) -> r.vector.test
+matrix(r.vector.test, nrow = 1000, ncol = 1000) %>% raster() -> test
+###
+```
+
+```{r}
+
+par(mfrow = c(1,3))
+plot(Xs[[1]])
+plot(Xs[[2]])
+plot(test)
+```
+
+
+```{r}
+
+
+for(i in 1:length(Xs[[1]])){
+  j <- 0
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
+  while(length(Xpop[inequation]) > 4){
+j <- j+1
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
+  r.vector[i] <- mean(Xpop[inequation])}
   
+test <- vector()
+## test
+for(i in 8){
+  j <- 0
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
+  while(length(Xpop[inequation]) > 4){
+j <- j+1
+inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
+  test[i] <- mean(Xpop[inequation])}
+##
 
 
 inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
