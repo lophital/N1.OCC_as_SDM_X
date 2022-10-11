@@ -48,6 +48,9 @@ knitr::opts_chunk$set(
 )
 ```
 
+
+# Pre
+## load things
 ```{r}
 library(tidyverse)
 library(sf)
@@ -59,27 +62,12 @@ library(SDMtune)
 library(precrec)
 library(Metrics)
 library(prg)
-
-```
-
-
-```{r}
-library(parallel) #parallel computing
-library(foreach)
-library(doParallel)
-
-cores <- 40
-cluster <- parallel::makeCluster(spec = cores, outfile="")
-doParallel::registerDoParallel(cl = cluster)
+library(rasterVis)
 ```
 
 
 
-
-
-
-
-
+## conflict
 ```{r}
 conflicted::conflict_prefer(name = "select", winner = "dplyr")
 conflicted::conflict_prefer(name = "filter", winner = "dplyr")
@@ -89,21 +77,60 @@ conflicted::conflict_prefer(name = "auc", winner = "SDMtune")
 ```
 
 
+# Intro
+## env.var - bioclimate 
 ```{r}
 list.files(path = paste(system.file(package = "dismo"),
                         "/ex", sep = ''),
            pattern = "grd",
            full.names = TRUE) %>%
-  head(8) %>%
+  str_subset("biome", negate = TRUE) %>%
+  .[c(1,5,6,7,8,2,3,4)] %>%
   raster::stack() -> bioclim
 bioclim
-names(bioclim) <- c("bio01", "bio12", "bio16", "bio17", "bio05", "bio06", "bio07", "bio08")
+```
+
+Fix names and order
+
+```{r}
+names(bioclim) <- c("bio01", "bio05", "bio06", "bio07", "bio08", "bio12", "bio16", "bio17")
 Xs <- bioclim
 Xs.name <- names(Xs)
+Xs
+```
+```{r}
+# standardization
+for(i in 1:nlayers(Xs)){
+(Xs[[i]] - cellStats(Xs[[1]], mean)) / cellStats(Xs[[i]], sd) -> Xs[[i]]
+}
+
+
+my.rescale <- function(x, x.min = NULL, x.max = NULL, new.min = 0, new.max = 1) {
+  if(is.null(x.min)) x.min = raster::minValue(x)
+  if(is.null(x.max)) x.max = raster::maxValue(x)
+  new.min + (x - x.min) * ((new.max - new.min) / (x.max - x.min))
+}
+
+# normalization
+for(i in 1:nlayers(Xs)){
+  my.rescale(Xs[[i]]) -> Xs[[i]]
+}
+
+Xs
+
+```
+
+```{r}
+
+rasterVis::levelplot(Xs, par.settings = viridisTheme(), contour = FALSE)
+#png(filename = "test.png",res = 300) if saving is needed
+dev.off()
 ```
 
 
-```{r}
+
+env.var - neutral landscape(보류)
+
 my.gfd <- function(){
 NLMR::nlm_gaussianfield(ncol = 1000, nrow = 1000,
                         resolution = 1,
@@ -112,9 +139,9 @@ NLMR::nlm_gaussianfield(ncol = 1000, nrow = 1000,
                         nug = 0,
                         mean = 0,
                         rescale = T)}
-```
 
-```{r}
+
+
 Xs <- list()
 for(i in 1:3){
   set.seed(i)
@@ -123,14 +150,17 @@ for(i in 1:3){
 stack(Xs) -> Xs
 
 
-```
 
-```{r}
+
+
+
+
 plot(Xs[[1]])
-```
 
 
-```{r}
+
+
+what is this
 set.seed(4)
 my.gfd() -> Xpop
 apop <- 2
@@ -140,7 +170,7 @@ X1 <- abs(Xpop*apop+sigma_01)*(sqrt(-2*log(sqrt(2*pi)*Xpop*(Xpop*apop+sigma_01))
 
 plot(sqrt(2*pi)*(Xpop*(Xpop*apop+sigma_01)) <= 1)
 
-```
+
 
 
 calc(Xpop, function(x, mu_01, Xpop, apop, sigma_01){
@@ -166,6 +196,92 @@ X1에 따른 Xpop을 구하는 방법은 다음과 같다.
 1. 샘플수를 선정
 2. 구하고자 하는 Xpop의 범위를 선정
 3. 
+# 2. Unimodal
+
+## 2.1 parameters
+
+영향을 받은 변수는 prime,
+영향을 받지 않는 변수는 dprime으로 구분한다.
+
+
+addTaskCallback(function(...) {set.seed(123);TRUE})
+
+
+```{r MC ineqauation}
+## param range
+mu.range <- seq(0.1, 0.9, by = 0.1)
+a.range <- seq(0.1, 0.9, by = 0.1)
+b.range <- seq(0.1, 0.9, by = 0.1)
+sigma.range <- seq(0.1, 0.9, by = 0.1)
+apop.range <- seq(0.1, 0.9, by = 0.1)
+e.variable.n.range <- 2:8 # 몇개의 환경 변수를 뽑을 것인가?
+e.variable.name.range <- 1:8 # 어떤 환경 변수를 뽑을 것인가?
+
+## parameter sampling
+mu <- sample(mu.range, 1)
+sigma <- sample(sigma.range, 1)
+sigma.dprime <- sample(sigma.range, 1)
+a <- sample(a.range, 1)
+apop.prime <- sample(apop.range, 1)
+apop.dprime <- sample(apop.range, 1)
+b <- sample(b.range, 1)
+Xpop <- runif(100000, min = 0, max = 1)
+
+## variable selection
+Xs.choosen <- Xs[[sort(sample(e.variable.name.range, sample(e.variable.n.range, 1)))]]
+nlayers(Xs.choosen)
+
+## Formulas
+forms.gaus.prime <- function(Xs){ # prime
+  ((1/sqrt(2*pi)*(Xpop*apop.prime + sigma.dprime))*exp(1)^(-(Xs[i]-mu)^2/2*((Xpop*apop.prime + sigma.dprime))^2))
+}
+
+
+forms.gaus <- function(Xs){
+  ((1/sqrt(2*pi)*sigma)*exp(1)^(-(Xs[i]-mu)^2/2*(sigma)^2))
+}
+
+forms.linear.prime <- function(Xs){ # prime
+  ((Xpop*apop.prime + apop.dprime)*Xs[i] + b)
+}
+
+#ifelse(cars$cyl > 4, 1, 0)
+
+forms.linear <- function(Xs){
+  ifelse(test = (a *Xs[i] + b) > 1, 
+         yes = signif(a *Xs[i] + b, 1), #땜빵. MAYBE could reach over 1, then fix this. 
+         no = (a *Xs[i] + b)
+  )
+}
+
+forms <- list(forms.gaus, forms.gaus.prime, forms.linear, forms.linear.prime)
+
+## MC equation
+inequation <- abs((forms.gaus.prime(Xs[[1]])) + forms.gaus(Xs[[2]]) - Xpop) < 0.1
+
+
+
+map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to apply
+     map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
+     function(fn, args){exec(fn, !!!args)}) -> test 
+#map_dbl(test, length)
+  as.data.frame(test) %>% 
+    rowSums() -> test
+inequation <- abs(test - Xpop) < 0.1
+length(Xpop[inequation])
+hist(Xpop[inequation])
+
+
+sum(inequation)
+test[inequation]
+sum(test)
+test
+
+forms.gaus.prime(Xs[[1]]) %>% my.rescale.vc()
+
+
+```
+
 
 ```{r}
 # 01 refer not effected
@@ -178,36 +294,41 @@ sigma_02 <- 0.3
 mu_02 <- 0.3
 
 
-Xpop = (1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
-       (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]]-mu_02)^2/2*(sigma_02)^2)
+#Xpop = (1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+#       (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]]-mu_02)^2/2*(sigma_02)^2)
 
 
 runs <- 100000
 Xpop <- runif(runs, min = 0, max = 1)
+
 ```
 
 
 
 
-
+MC fitting of Xpop
 ```{r}
 set.seed(1)
-
-acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
-r.vector <- vector()
-foreach(i = 1:length(Xs[[1]])) %dopar% {
-  j <- 1
-inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
-              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
-  while(length(Xpop[inequation]) > 4){
-j <- j+1
-inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
-              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
-  r.vector[i] <- mean(Xpop[inequation])} -> r.vector
+### what
+#acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
+#r.vector <- vector()
+#foreach(i = 1:length(Xs[[1]])) %dopar% {
+#  j <- 1
+#inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+#              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < 0.1
+#  while(length(Xpop[inequation]) > 4){
+#j <- j+1
+#inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
+#              (1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2) - Xpop) < acc.lim[j]}
+#  r.vector[i] <- mean(Xpop[inequation])} -> r.vector
 
 ### test
 acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
+acc.lim <- rev(seq(from = 0.00000001, to = 0.0001, by = 0.0000005))
 r.vector <- vector()
+inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
+              ((1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2)) - Xpop) < 0.1
+
 foreach(i = 1:length(Xs[[1]])) %dopar% {
   j <- 1
 inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
@@ -216,12 +337,27 @@ inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_
 j <- j+1
 inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
               ((1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2)) - Xpop) < acc.lim[j]}
-  r.vector[i] <- mean(Xpop[inequation])} -> r.vector
+  mean(Xpop[inequation])} -> r.vector # 양옆으로 날개침 고쳐봄... 안되면 1000 NLMR 쓰지말것... 
 
 map_dbl(r.vector, rbind) -> r.vector.test
-matrix(r.vector.test, nrow = 1000, ncol = 1000) %>% raster() -> test
-###
+#matrix(r.vector.test, nrow = 1000, ncol = 1000) %>% raster() -> test
+
 ```
+
+
+```{r}
+test %>% plot()
+```
+
+
+```{r}
+is.na(Xs[[1]]) -> raster.blank
+as.vector(raster.blank) %>% length()
+raster::values(raster.blank) <- r.vector.test
+raster.blank
+plot(raster.blank)
+```
+
 
 ```{r}
 
@@ -229,6 +365,17 @@ par(mfrow = c(1,3))
 plot(Xs[[1]])
 plot(Xs[[2]])
 plot(test)
+```
+
+## parallel 
+```{r}
+library(parallel) #parallel computing
+library(foreach)
+library(doParallel)
+
+cores <- 60
+cluster <- parallel::makeCluster(spec = cores, outfile="")
+doParallel::registerDoParallel(cl = cluster)
 ```
 
 
@@ -487,6 +634,12 @@ plot(vs.rnd$suitab.raster)
 my.rescale <- function(x, x.min = NULL, x.max = NULL, new.min = 0, new.max = 1) {
   if(is.null(x.min)) x.min = raster::minValue(x)
   if(is.null(x.max)) x.max = raster::maxValue(x)
+  new.min + (x - x.min) * ((new.max - new.min) / (x.max - x.min))
+}
+
+my.rescale.vc <- function(x, x.min = NULL, x.max = NULL, new.min = 0, new.max = 1) {
+  if(is.null(x.min)) x.min = base::min(x, na.rm = TRUE)
+  if(is.null(x.max)) x.max = base::max(x, na.rm = TRUE)
   new.min + (x - x.min) * ((new.max - new.min) / (x.max - x.min))
 }
 
