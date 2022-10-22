@@ -208,7 +208,7 @@ nlayers(Xs.choosen)
 Xs.choosen
 ```
 
-```{r}
+```{r formula setting}
 Xpop <- runif(100000*nlayers(Xs.choosen), min = 0, max = nlayers(Xs.choosen))
 
 ## Formulas
