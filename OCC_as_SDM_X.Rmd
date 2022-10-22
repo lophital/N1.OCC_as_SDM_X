@@ -89,6 +89,7 @@ list.files(path = paste(system.file(package = "dismo"),
   raster::stack() -> bioclim
 bioclim
 ```
+Bioclimate variable is stacked raster 
 
 Fix names and order
 
@@ -133,91 +134,43 @@ rasterVis::levelplot(Xs, par.settings = viridisTheme(), contour = FALSE)
 #dev.off()
 ```
 
+Create raster blank, raster fill.
+raster fill indiacate which cell have value or not
+
 ```{r}
 is.na(Xs[[1]]) -> raster.blank
 !is.na(Xs[[1]]) -> raster.fill
 
-which(as.vector(raster.fill)) -> vc.filled
+which(as.vector(raster.fill)) -> vc.filled # cell IDs to fill in in after MC Equation fitting.
 
-as.vector(raster.blank) %>% length()
+as.vector(raster.blank) %>% length() # around 35712
 ```
-
-
-env.var - neutral landscape(보류)
-
-my.gfd <- function(){
-NLMR::nlm_gaussianfield(ncol = 1000, nrow = 1000,
-                        resolution = 1,
-                        autocorr_range = 100, # range of SAC
-                        mag_var = 1,
-                        nug = 0,
-                        mean = 0,
-                        rescale = T)}
-
-
-
-Xs <- list()
-for(i in 1:3){
-  set.seed(i)
-  my.gfd() -> Xs[[i]]
-}
-stack(Xs) -> Xs
-
-
-
-
-
-
-
-plot(Xs[[1]])
-
-
-
-
-what is this
-set.seed(4)
-my.gfd() -> Xpop
-apop <- 2
-sigma_01 <- 0.5
-mu_01 <- 0.6
-X1 <- abs(Xpop*apop+sigma_01)*(sqrt(-2*log(sqrt(2*pi)*Xpop*(Xpop*apop+sigma_01))))+mu_01
-
-plot(sqrt(2*pi)*(Xpop*(Xpop*apop+sigma_01)) <= 1)
-
-
-
-
-calc(Xpop, function(x, mu_01, Xpop, apop, sigma_01){
-  dnorm(x = x,
-        mean = mu_01, 
-        sd = Xpop*apop+sigma_01)
-})
-
 
 
 기존의 연구 방식은 환경 변수 Xs에 의해 Xpop 혹은 HS가 결정되는 방식이다.
 이를 위해서는 Xpop(좌항)을 환경 변수 Xs에 대한 식(우항)으로 정리할 수 있어야 한다.
-하지만 본 연구에서 제기하는 상황(Xpop이 방정식 좌우항에 포함되는 상황)에서는 식의 정리가 어렵다.
+하지만 본 연구에서 제기하는 상황(Xpop이 방정식 좌우항에 포함되는 상황)에서는 식의 정리가 어렵다(수학적으로 불가능하다고 여기는 중).
 가능한 것은
 상황을 만족하는 X1과 Xpop을 구하는 것 뿐이다.
 
 X1에 따른 Xpop을 구하는 방법은 다음과 같다.
 1. Xs 를 무작위로 선정한다.
-2-1. apop_n, sigma_n, mu_01을 선정한다.
+2. apop_n, sigma_n, mu 등의 계수와 상수들을 선정한다.
 3. 방정식에 최대한 근접하는 Xpop을 추정한다.
 
+3번째 단계를 위해서 몬테카를로 방식을 도입한다.
 몬테카를로 방식은 다음과 같다.
 1. 샘플수를 선정
 2. 구하고자 하는 Xpop의 범위를 선정
-3. 
-# 2. Unimodal
-
-## 2.1 parameters
-
-영향을 받은 변수는 prime,
-영향을 받지 않는 변수는 dprime으로 구분한다.
+3. 정확도를 선정(acc.lim)
+4. 정확도를 점차 높여가며 최대로 정확한(= 0에 가까운) Xpop의 집합을 추림
+5. 남은 Xpop의 집합의 평균을 Xpop으로 선정
 
 
+개체군 효과의 영향을 받은 변수는 prime,
+개체군 효과의 영향을 받지 않는 변수는 dprime으로 구분한다.
+
+에러:
 addTaskCallback(function(...) {set.seed(123);TRUE})
 
 
@@ -259,6 +212,10 @@ Xs.choosen
 Xpop <- runif(100000*nlayers(Xs.choosen), min = 0, max = nlayers(Xs.choosen))
 
 ## Formulas
+
+### Xs[i] 
+
+
 forms.gaus.prime <- function(Xs){ # prime
   ((1/sqrt(2*pi)*(Xpop*apop.prime + sigma.dprime))*exp(1)^(-(Xs[i]-mu)^2/2*((Xpop*apop.prime + sigma.dprime))^2)) -> vc
   idx.over <- vc > 1
@@ -314,7 +271,7 @@ map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to appl
      function(fn, args){exec(fn, !!!args)}) -> test 
 #map_dbl(test, length)
   as.data.frame(test) %>% 
-    rowSums() -> test
+    rowSums() -> test # 좌변
   
 inequation <- abs(test - Xpop) < 0.0001
 length(Xpop[inequation])
@@ -453,10 +410,12 @@ mean(Xpop[inequation])} -> r.vector
 map_dbl(r.vector, rbind) -> r.vector.test
 ```
 
+
+
 ```{r Testing foreach - Does it work on for loop?}
 r.vector <- vector()
 set.seed(1)
-for(i in vc.filled){
+for(i in vc.filled[1:10]){
 ## parameter sampling
 mu <- sample(mu.range, 1)
 sigma <- sample(sigma.range, 1)
@@ -470,7 +429,6 @@ b <- sample(b.range, 1)
 ## variable selection
 Xs.choosen <- Xs[[sort(sample(e.variable.name.range, sample(e.variable.n.range, 1)))]]
 Xpop <- runif(100000*nlayers(Xs.choosen), min = 0, max = nlayers(Xs.choosen))
-
 
 map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to apply
      map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
@@ -488,6 +446,10 @@ mean(Xpop[inequation]) -> r.vector[i]}
 
 map_dbl(r.vector, rbind) -> r.vector.test
 ```
+
+
+
+
 
 ```{r}
 # once r.vector.test is caculated.
