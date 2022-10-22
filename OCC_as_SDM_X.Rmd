@@ -126,6 +126,8 @@ for(i in 1:nlayers(Xs)){
 Xs
 
 ```
+standard, norm so that paramters(apop, Mu, etc) can effect under certain range(0~1, apop.range, mu.range etc)
+
 
 ```{r}
 
@@ -147,11 +149,14 @@ as.vector(raster.blank) %>% length() # around 35712
 ```
 
 
-기존의 연구 방식은 환경 변수 Xs에 의해 Xpop 혹은 HS가 결정되는 방식이다.
-이를 위해서는 Xpop(좌항)을 환경 변수 Xs에 대한 식(우항)으로 정리할 수 있어야 한다.
-하지만 본 연구에서 제기하는 상황(Xpop이 방정식 좌우항에 포함되는 상황)에서는 식의 정리가 어렵다(수학적으로 불가능하다고 여기는 중).
-가능한 것은
-상황을 만족하는 X1과 Xpop을 구하는 것 뿐이다.
+기존의 연구 방식은 환경 변수 Xs에 의해 Xpop 혹은 HS가 결정된다고 보고 
+알려진 환경 변수 래스터에 특정한 함수(선형이나 정규분포) 따위를 적용해 
+최종 서식처 적합도(Xpop = Yhs)를 계산했다.
+
+하지만 본 연구에서 제기하는 상황(Xpop이 방정식 좌우항에 포함되는 상황)에서는 식의 정리(= Xpop에 대한 식으로 정리)가 어렵다(수학적으로 불가능하다고 여기는 중). 특히 정규분포 식의 복잡한 공식 때문에 방정식 조합을 만족하는 Xpop을 추정하는 것은 무척 어렵다. 
+대신, 접근법을 달리하여
+방정식에 = 을 사용하지 않고 <= 같은 근사치를 구하는 것으로 접근을 바꾸었다.
+따라서, 
 
 X1에 따른 Xpop을 구하는 방법은 다음과 같다.
 1. Xs 를 무작위로 선정한다.
@@ -398,11 +403,13 @@ map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to appl
      map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
      function(fn, args){exec(fn, !!!args)}) -> test
      as.data.frame(test) %>% 
-     rowSums() -> test
-
+     rowSums() -> test # formula result 우변, 좌변은 Xpop
+# abs(test-Xpop)은 좌변을 우변으로 옮겨서 계산하는 과정을 의미합니다.
+# 이것이 0이면 방정식이지만 계산이 어렵고 근사치로도 충분하기 때문에 0에 최대한 근접하게 하는(= acc.lim을 0에 가깝게 늘려가면서!)
+# Xpop을 추정하는 것이 목적입니다!
 j <- 1
 inequation <- abs(test - Xpop) < 0.1
-  while(length(Xpop[inequation]) > 4 && j == length(acc.lim)-1){
+  while(length(Xpop[inequation]) > 4 && j == length(acc.lim)-1){ # 정확도의 조건은 최종 후보자가 4개 이하거나 acc.lim을 거의 끝(-1)까지 갔을 때
     j <- j+1
 inequation <- abs(test - Xpop) < acc.lim[j]
 }
@@ -415,7 +422,7 @@ map_dbl(r.vector, rbind) -> r.vector.test
 ```{r Testing foreach - Does it work on for loop?}
 r.vector <- vector()
 set.seed(1)
-for(i in vc.filled[1:10]){
+for(i in vc.filled){
 ## parameter sampling
 mu <- sample(mu.range, 1)
 sigma <- sample(sigma.range, 1)
