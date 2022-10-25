@@ -542,8 +542,6 @@ plot(test)
 
 
 ```{r}
-
-
 for(i in 1:length(Xs[[1]])){
   j <- 0
 inequation <- abs((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2) +
