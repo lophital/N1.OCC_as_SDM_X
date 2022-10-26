@@ -94,6 +94,18 @@ Bioclimate variable is stacked raster
 Fix names and order
 
 ```{r}
+set.seed(1)
+stack(
+NLMR::nlm_gaussianfield(10, 10),
+NLMR::nlm_gaussianfield(10, 10),
+NLMR::nlm_gaussianfield(10, 10)) -> Xs
+plot(Xs)
+```
+
+
+
+```{r}
+
 names(bioclim) <- c("bio01", "bio05", "bio06", "bio07", "bio08", "bio12", "bio16", "bio17")
 Xs <- bioclim
 Xs.name <- names(Xs)
@@ -178,7 +190,7 @@ X1에 따른 Xpop을 구하는 방법은 다음과 같다.
 에러:
 addTaskCallback(function(...) {set.seed(123);TRUE})
 
-
+# Test 1. single point
 
 
 ```{r MC ineqauation}
@@ -191,8 +203,8 @@ a.range <- seq(0.1, 0.9, by = 0.1)
 b.range <- seq(0.1, 0.9, by = 0.1)
 sigma.range <- seq(0.1, 0.9, by = 0.1)
 apop.range <- seq(0.1, 0.9, by = 0.1)
-e.variable.n.range <- 2:8 # 몇개의 환경 변수를 뽑을 것인가?
-e.variable.name.range <- 1:8 # 어떤 환경 변수를 뽑을 것인가?
+e.variable.n.range <- 2:nlayers(Xs) # 몇개의 환경 변수를 뽑을 것인가?
+e.variable.name.range <- 1:nlayers(Xs) # 어떤 환경 변수를 뽑을 것인가?
 
 ## parameter sampling
 mu <- sample(mu.range, 1)
@@ -269,9 +281,18 @@ forms <- list(forms.gaus, forms.gaus.prime, forms.linear, forms.linear.prime)
 #inequation <- abs((forms.gaus.prime(Xs[[1]])) + forms.gaus(Xs[[2]]) - Xpop) < 0.0001
 #length(Xpop[inequation])
 #Xpop[inequation]
+```
+
+```{r}
+set.seed(1)
+forms.choosen <- sample(forms, nlayers(Xs.choosen), replace = TRUE)
+forms.choosen
+```
+Gaus + Linear Prime
 
 
-map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to apply
+```{r}
+map2(forms.choosen, # which formula to apply
      map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
      function(fn, args){exec(fn, !!!args)}) -> test 
 #map_dbl(test, length)
@@ -284,7 +305,7 @@ hist(Xpop[inequation], 100)
 Xpop[inequation]
 
 ```
-
+# Test 2. Foreach level
 
 
 ```{r Testing foreach to raster level-range set}
@@ -294,8 +315,8 @@ a.range <- seq(0.1, 0.9, by = 0.1)
 b.range <- seq(0.1, 0.9, by = 0.1)
 sigma.range <- seq(0.1, 0.9, by = 0.1)
 apop.range <- seq(0.1, 0.9, by = 0.1)
-e.variable.n.range <- 2:8 # 몇개의 환경 변수를 뽑을 것인가?
-e.variable.name.range <- 1:8 # 어떤 환경 변수를 뽑을 것인가?
+e.variable.n.range <- 2:nlayers(Xs) # 몇개의 환경 변수를 뽑을 것인가?
+e.variable.name.range <- 1:nlayers(Xs) # 어떤 환경 변수를 뽑을 것인가?
 
 ## Formulas
 forms.gaus.prime <- function(Xs){ # prime
@@ -340,7 +361,7 @@ forms.linear <- function(Xs){
 
 forms <- list(forms.gaus, forms.gaus.prime, forms.linear, forms.linear.prime)
 
-acc.lim <- rev(seq(from = 0.00000001, to = 0.0001, by = 0.0000005))
+acc.lim <- rev(seq(from = 0.0000005, to = 0.0001, by = 0.0000005))
 r.vector <- vector()
 ```
 
@@ -364,16 +385,20 @@ doParallel::registerDoParallel(cl = cluster)
 을 적용해 좌변을 만든다. -> Test
 
 좌변 - xpop이 0.1보다 적은지 테스트 하는 과정(while)
+## foreach MC
 
 ```{r Testing foreach to raster level-functional}
+set.seed(seed)
 Xpop <- runif(100000*nlayers(Xs.choosen), min = 0, max = nlayers(Xs.choosen))
-acc.lim <- rev(seq(from = 0.00000001, to = 0.0001, by = 0.0000005))
+acc.lim <- rev(seq(from = 0.0000005, to = 0.0005, by = 0.0000005))
 ##############
 ## FOR EACH ##
 ##############
 
-foreach(seed = 1:2, .packages = c("magrittr", "purrr", "raster")) %:% 
-  foreach(i = vc.filled) %dopar% {
+r.vector.test.foreach <- list()
+
+for(seed in 1:2){
+  foreach(i = vc.filled, .packages = c("magrittr", "purrr", "raster")) %dopar% {
 set.seed(seed)
 ## parameter sampling
 mu <- sample(mu.range, 1)
@@ -399,31 +424,100 @@ Xs.choosen <- Xs[[sort(sample(e.variable.name.range, sample(e.variable.n.range, 
 .GlobalEnv$b <- b
 .GlobalEnv$acc.lim <- acc.lim
 
-map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to apply
+## Formulas
+forms.gaus.prime <- function(Xs){ # prime
+  ((1/sqrt(2*pi)*(Xpop*apop.prime + sigma.dprime))*exp(1)^(-(Xs[i]-mu)^2/2*((Xpop*apop.prime + sigma.dprime))^2)) -> vc
+  idx.over <- vc > 1
+  idx.lower <- vc < 0
+  vc[idx.over] <- 1
+  vc[idx.lower] <- 0
+  return(vc)
+}
+
+
+forms.gaus <- function(Xs){
+  ((1/sqrt(2*pi)*sigma)*exp(1)^(-(Xs[i]-mu)^2/2*(sigma)^2)) -> vc
+  idx.over <- vc > 1
+   idx.lower <- vc < 0
+   vc[idx.over] <- 1
+   vc[idx.lower] <- 0
+   return(vc)
+}
+
+forms.linear.prime <- function(Xs){ # prime
+  ((Xpop*apop.prime + apop.dprime)*Xs[i] + b) -> vc
+  idx.over <- vc > 1
+   idx.lower <- vc < 0
+   vc[idx.over] <- 1
+   vc[idx.lower] <- 0
+   return(vc)
+}
+
+# ifelse is slow.
+# vectorization :)
+
+forms.linear <- function(Xs){
+  (a *Xs[i] + b) -> vc
+  idx.over <- vc > 1
+   idx.lower <- vc < 0
+   vc[idx.over] <- 1
+   vc[idx.lower] <- 0
+   return(vc)
+}
+
+forms <- list(forms.gaus, forms.gaus.prime, forms.linear, forms.linear.prime)
+
+
+
+
+
+
+
+
+set.seed(seed)
+forms.choosen <- sample(forms, nlayers(Xs.choosen), replace = TRUE)
+
+map2(forms.choosen, # which formula to apply
      map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
-     function(fn, args){exec(fn, !!!args)}) -> test
-     as.data.frame(test) %>% 
-     rowSums() -> test # formula result 우변, 좌변은 Xpop
+     function(fn, args){exec(fn, !!!args)}) -> test.1
+     as.data.frame(test.1) %>% 
+     rowSums() -> test.2 # formula result 우변, 좌변은 Xpop
 # abs(test-Xpop)은 좌변을 우변으로 옮겨서 계산하는 과정을 의미합니다.
 # 이것이 0이면 방정식이지만 계산이 어렵고 근사치로도 충분하기 때문에 0에 최대한 근접하게 하는(= acc.lim을 0에 가깝게 늘려가면서!)
 # Xpop을 추정하는 것이 목적입니다!
 j <- 1
-inequation <- abs(test - Xpop) < 0.1
+inequation <- abs(test.2 - Xpop) < 0.1
   while(length(Xpop[inequation]) > 4 && j == length(acc.lim)-1){ # 정확도의 조건은 최종 후보자가 4개 이하거나 acc.lim을 거의 끝(-1)까지 갔을 때
     j <- j+1
-inequation <- abs(test - Xpop) < acc.lim[j]
+inequation <- abs(test.2 - Xpop) < acc.lim[j]
 }
 mean(Xpop[inequation])} -> r.vector
-map_dbl(r.vector, rbind) -> r.vector.test
+map_dbl(r.vector, rbind) -> r.vector.test.foreach[[seed]]}
+
+
+```
+
+```{r}
+# once r.vector.test is caculated.
+raster.fill[raster::values(raster.fill)] <- r.vector.test.foreach[[2]]
+plot(raster.fill)
+
+
+
+raster.Xpop <- my.rescale(raster.fill) # rescale to 0~1
+plot(raster.Xpop)
 ```
 
 
+# Test 3. For loop
 
 ```{r Testing foreach - Does it work on for loop?}
 r.vector <- vector()
-set.seed(1)
+for(seed in 2){
 for(i in vc.filled){
+  
 ## parameter sampling
+set.seed(seed)
 mu <- sample(mu.range, 1)
 sigma <- sample(sigma.range, 1)
 sigma.dprime <- sample(sigma.range, 1)
@@ -434,24 +528,28 @@ b <- sample(b.range, 1)
 
 
 ## variable selection
+set.seed(seed)
 Xs.choosen <- Xs[[sort(sample(e.variable.name.range, sample(e.variable.n.range, 1)))]]
+set.seed(seed)
 Xpop <- runif(100000*nlayers(Xs.choosen), min = 0, max = nlayers(Xs.choosen))
 
-map2(sample(forms, nlayers(Xs.choosen), replace = TRUE), # which formula to apply
+set.seed(seed)
+forms.choosen <- sample(forms, nlayers(Xs.choosen), replace = TRUE)
+
+map2(forms.choosen, # which formula to apply
      map(as.list(Xs.choosen), function(x){list(Xs = x)}),  # supply choosen variables as list
-     function(fn, args){exec(fn, !!!args)}) -> test
-     as.data.frame(test) %>% 
-     rowSums() -> test
+     function(fn, args){exec(fn, !!!args)}) -> test.1
+     as.data.frame(test.1) %>% 
+     rowSums() -> test.2
 
 j <- 1
-inequation <- abs(test - Xpop) < 0.1
+inequation <- abs(test.2 - Xpop) < 0.1
   while(length(Xpop[inequation]) > 4 && j == length(acc.lim)-1){
     j <- j+1
-inequation <- abs(test - Xpop) < acc.lim[j]}
-mean(Xpop[inequation]) -> r.vector[i]}
-
-
-map_dbl(r.vector, rbind) -> r.vector.test
+inequation <- abs(test.2 - Xpop) < acc.lim[j]}
+mean(Xpop[inequation]) -> r.vector[i]}}
+r.vector[!is.na(r.vector)] -> r.vector
+#map_dbl(r.vector, rbind) -> r.vector.test
 ```
 
 
@@ -460,9 +558,13 @@ map_dbl(r.vector, rbind) -> r.vector.test
 
 ```{r}
 # once r.vector.test is caculated.
-raster::values(raster.blank) <- r.vector.test
-raster.blank
-plot(raster.blank)
+raster.fill[raster::values(raster.fill)] <- r.vector.test.foreach
+plot(raster.fill)
+
+
+
+raster.Xpop <- my.rescale(raster.fill) # rescale to 0~1
+plot(raster.Xpop)
 
 ```
 
@@ -507,7 +609,7 @@ set.seed(1)
 
 ### test
 acc.lim <- rev(seq(from = 0.0000000001, to = 0.0001, by = 0.000000005))
-acc.lim <- rev(seq(from = 0.00000001, to = 0.0001, by = 0.0000005))
+acc.lim <- rev(seq(from = 0.00000005, to = 0.00005, by = 0.00000005))
 r.vector <- vector()
 inequation <- abs(((1/sqrt(2*pi)*(Xpop*apop_1+sigma_1))*exp(1)^(-(Xs[[1]][i]-mu_01)^2/2*((Xpop*apop_1+sigma_1))^2)) +
               ((1/sqrt(2*pi)*sigma_02)*exp(1)^(-(Xs[[2]][i]-mu_02)^2/2*(sigma_02)^2)) - Xpop) < 0.1
